@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 cd /d "%~dp0"
 title Clipa Single
 
@@ -28,41 +28,26 @@ if exist "yt-dlp.exe" (
 :: ── Verificar Python ─────────────────────────────────────────
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [+] Python no encontrado. Intentando instalar automaticamente ^(Windows 10/11^)...
-    winget --version >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [ERROR] Tu Windows no soporta auto-instalacion. Instala Python desde https://python.org
-        pause
-        exit /b 1
-    )
-    winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
+    echo [+] Python no encontrado. Abriendo guia de instalacion en el navegador...
+    start "" "%~dp0frontend\setup.html"
     echo.
-    echo ==============================================================
-    echo  PYTHON INSTALADO. Por favor, CIERRA esta ventana y vuelve a
-    echo  abrir iniciar.bat para continuar.
-    echo ==============================================================
+    echo [!] Por favor, instala Python 3.11+ desde los enlaces.
+    echo     Marca la opcion "Add python.exe to PATH" durante la instalacion.
+    echo     Una vez instalado, cierra esta ventana y vuelve a ejecutar iniciar.bat
     pause
-    exit /b 0
+    exit /b 1
 )
 
 :: ── Verificar FFmpeg ─────────────────────────────────────────
 ffmpeg -version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [+] FFmpeg no encontrado. Intentando instalar automaticamente...
-    winget --version >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [AVISO] Tu Windows no soporta auto-instalacion. Descargalo desde https://ffmpeg.org/download.html
-        echo.
-    ) else (
-        winget install -e --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
-        echo.
-        echo ==============================================================
-        echo  FFMPEG INSTALADO. Por favor, CIERRA esta ventana y vuelve a
-        echo  abrir iniciar.bat para continuar.
-        echo ==============================================================
-        pause
-        exit /b 0
-    )
+    echo [+] FFmpeg no encontrado. Abriendo guia de instalacion en el navegador...
+    start "" "%~dp0frontend\setup.html"
+    echo.
+    echo [!] Por favor, instala FFmpeg desde los enlaces.
+    echo     Una vez instalado, vuelve a ejecutar iniciar.bat
+    pause
+    exit /b 1
 )
 
 :: ── Verificar yt-dlp.exe ─────────────────────────────────────
@@ -119,7 +104,7 @@ if %errorlevel% neq 0 (
 powershell -NoProfile -Command "Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int n);' -Name W -Namespace W; [W.W]::ShowWindow((Get-Process -Id $PID).MainWindowHandle,6)" >nul 2>&1
 
 :: ── Abrir frontend ────────────────────────────────────────────
-start http://127.0.0.1:5000/setup.html
+start http://127.0.0.1:5000/index.html
 
 :: La ventana se cierra sola, el backend sigue corriendo en segundo plano
 exit
