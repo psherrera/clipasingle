@@ -10,12 +10,7 @@ echo   Clipa Single - Descargador Local
 echo ==========================================
 echo.
 
-:: ── Verificar Actualizaciones (Git) ──────────────────────────
-if exist ".git" (
-    echo [+] Buscando actualizaciones en el repositorio...
-    git pull origin main
-    echo.
-)
+
 
 :: ── Actualizar yt-dlp ────────────────────────────────────────
 if exist "yt-dlp.exe" (
