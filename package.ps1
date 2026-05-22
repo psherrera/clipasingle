@@ -1,4 +1,4 @@
-﻿# package.ps1 - Crea un ZIP listo para copiar al pendrive usando un temp dir y robocopy
+# package.ps1 - Crea un ZIP listo para copiar al pendrive usando un temp dir y robocopy
 # Ejecución: desde la raíz del repo (PowerShell)
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -16,7 +16,7 @@ if ([string]::IsNullOrWhiteSpace($destInput)) {
     }
 }
 
-$temp = Join-Path -Path $env:TEMP -ChildPath ("Clipa Single_pkg_" + [System.Guid]::NewGuid().ToString())
+$temp = Join-Path -Path $env:TEMP -ChildPath ("clipasingle_pkg_" + [System.Guid]::NewGuid().ToString())
 Write-Host "Usando directorio temporal: $temp" -ForegroundColor Gray
 New-Item -ItemType Directory -Path $temp | Out-Null
 
