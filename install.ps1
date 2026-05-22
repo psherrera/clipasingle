@@ -1,5 +1,5 @@
-# install.ps1 - Instalador interactivo para Clipadsk
-Write-Host "Instalador interactivo Clipadsk" -ForegroundColor Cyan
+﻿# install.ps1 - Instalador interactivo para Clipa Single
+Write-Host "Instalador interactivo Clipa Single" -ForegroundColor Cyan
 
 function Ask-Yes($text, $default = $true) {
     $yn = $default ? "[Y/n]" : "[y/N]"
@@ -11,7 +11,7 @@ function Ask-Yes($text, $default = $true) {
     }
 }
 
-Write-Host "\nResumen: Este script te guía para levantar Clipadsk en Windows." -ForegroundColor Yellow
+Write-Host "\nResumen: Este script te guía para levantar Clipa Single en Windows." -ForegroundColor Yellow
 
 # Lista de comprobación rápida (se mostrará al usuario)
 Write-Host "\nArchivos recomendados para copiar al pendrive:" -ForegroundColor Cyan

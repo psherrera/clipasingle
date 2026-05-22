@@ -1,4 +1,4 @@
-"""
+﻿"""
 YT Downloader Pro - Backend
 Optimized for Render.com deployment.
 Features: 
@@ -54,7 +54,7 @@ from dotenv import load_dotenv
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
 import logging
 logging.basicConfig(level=LOG_LEVEL, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
-logger = logging.getLogger('clipadsk')
+logger = logging.getLogger('Clipa Single')
 
 # --- AÑADIR RAÍZ AL PATH PARA ENCONTRAR FFMPEG SI ESTÁ AHÍ ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -166,7 +166,7 @@ for p in ffmpeg_extra_paths:
 os.environ["PATH"] = nuevo_path
 
 # --- BASE DE DATOS (SQLite) ---
-DB_FILE = os.path.join(BASE_DIR, 'clipadsk.db')
+DB_FILE = os.path.join(BASE_DIR, 'Clipa Single.db')
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)

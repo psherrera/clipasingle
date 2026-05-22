@@ -1,5 +1,5 @@
 /**
- * Clipadsk - Frontend v2.0
+ * Clipa Single - Frontend v2.0
  * Herramienta de transcripción para periodistas y comunicadores.
  * Mejoras: WhatsApp upload, TikTok/Twitter/Facebook, herramientas periodísticas, historial.
  */
@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ─── FIRST-RUN REDIRECT ──────────────────────────────────────────────────────
     // Si el usuario nunca completó el setup, redirigir antes de cargar nada
-    if (!localStorage.getItem('clipadsk_setup_done')) {
+    if (!localStorage.getItem('clipasingle_setup_done')) {
         window.location.replace('setup.html');
         return; // Detener el resto del script
     }
@@ -75,8 +75,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ─── HISTORY ─────────────────────────────────────────────────────────────────
-    const HISTORY_KEY = 'clipadsk_history';
-    const GROQ_KEY_STORE = 'clipadsk_groq_api_key';
+    const HISTORY_KEY = 'clipasingle_history';
+    const GROQ_KEY_STORE = 'clipasingle_groq_api_key';
 
     if (groqApiKeyInput) {
         groqApiKeyInput.value = localStorage.getItem(GROQ_KEY_STORE) || '';

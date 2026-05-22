@@ -1,10 +1,10 @@
-# package.ps1 - Crea un ZIP listo para copiar al pendrive usando un temp dir y robocopy
+﻿# package.ps1 - Crea un ZIP listo para copiar al pendrive usando un temp dir y robocopy
 # Ejecución: desde la raíz del repo (PowerShell)
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Write-Host "Creando ZIP desde: $root" -ForegroundColor Cyan
 
-$defaultName = Join-Path -Path $root -ChildPath "clipadsk-package.zip"
+$defaultName = Join-Path -Path $root -ChildPath "Clipa Single-package.zip"
 $destInput = Read-Host "Ruta destino para el ZIP (enter para usar $defaultName)"
 if ([string]::IsNullOrWhiteSpace($destInput)) {
     $dest = $defaultName
@@ -16,7 +16,7 @@ if ([string]::IsNullOrWhiteSpace($destInput)) {
     }
 }
 
-$temp = Join-Path -Path $env:TEMP -ChildPath ("clipadsk_pkg_" + [System.Guid]::NewGuid().ToString())
+$temp = Join-Path -Path $env:TEMP -ChildPath ("Clipa Single_pkg_" + [System.Guid]::NewGuid().ToString())
 Write-Host "Usando directorio temporal: $temp" -ForegroundColor Gray
 New-Item -ItemType Directory -Path $temp | Out-Null
 
@@ -38,7 +38,7 @@ if (Test-Path (Join-Path $root 'frontend')) {
 
 # Copiar backend excluyendo downloads y model
 if (Test-Path (Join-Path $root 'backend')) {
-    Safe-RoboCopy (Join-Path $root 'backend') (Join-Path $temp 'backend') @('downloads','model') @('clipadsk.db','transcripts_cache.json','transcripts_cache.json.migrated')
+    Safe-RoboCopy (Join-Path $root 'backend') (Join-Path $temp 'backend') @('downloads','model') @('Clipa Single.db','transcripts_cache.json','transcripts_cache.json.migrated')
 }
 
 # Copiar ficheros sueltos

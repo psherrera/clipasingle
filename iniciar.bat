@@ -1,12 +1,12 @@
-@echo off
+﻿@echo off
 cd /d "%~dp0"
-title Clipadsk
+title Clipa Single
 
 :: Matar procesos previos para evitar conflictos de puerto 5000
 taskkill /f /im python.exe /t >nul 2>&1
 echo [+] Limpiando procesos previos...
 echo ==========================================
-echo   Clipadsk - Descargador Local
+echo   Clipa Single - Descargador Local
 echo ==========================================
 echo.
 

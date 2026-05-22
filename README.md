@@ -1,4 +1,4 @@
-# Clipadsk 🎬
+﻿# Clipa Single 🎬
 
 Descargador y transcriptor de video 100% local.  
 Soporta YouTube e Instagram. Sin login, sin nube, sin telemetría.
@@ -111,7 +111,7 @@ El backend lo detecta automáticamente.
 ## Estructura
 
 ```
-clipadsk/
+Clipa Single/
 ├── backend/
 │   ├── main.py            ← API FastAPI (solo local)
 │   ├── requirements.txt

@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -24,7 +24,7 @@ venv/
 backend/venv/
 
 # App data and caches
-clipadsk.db
+Clipa Single.db
 transcripts_cache.json
 transcripts_cache.json.migrated
 

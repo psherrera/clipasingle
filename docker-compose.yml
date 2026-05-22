@@ -1,4 +1,4 @@
-version: '3.8'
+﻿version: '3.8'
 
 # Uso: docker-compose up -d --build
 # Frontend: http://localhost
@@ -7,7 +7,7 @@ version: '3.8'
 services:
   backend:
     build: ./backend
-    container_name: clipadsk-backend
+    container_name: Clipa Single-backend
     ports:
       - "5000:5000"
     volumes:
@@ -22,7 +22,7 @@ services:
 
   frontend:
     image: nginx:alpine
-    container_name: clipadsk-frontend
+    container_name: Clipa Single-frontend
     ports:
       - "80:80"
     volumes:

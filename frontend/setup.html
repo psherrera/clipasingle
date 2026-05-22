@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clipadsk - Configuración Inicial</title>
+    <title>Clipa Single - Configuración Inicial</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -13,21 +13,21 @@
         body { background-color: #0a0812; font-family: 'Outfit', sans-serif; color: #f1f5f9; }
         .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.05); }
         .glass-hover { transition: all 0.2s ease; }
-        .glass-hover:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(137, 90, 246, 0.25); }
-        .accent-gradient { background: linear-gradient(135deg, #895af6, #06b6d4); }
-        .step-number { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(137, 90, 246, 0.2); color: #895af6; font-weight: 800; font-size: 0.9rem; flex-shrink: 0; }
+        .glass-hover:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(239, 68, 68, 0.25); }
+        .accent-gradient { background: linear-gradient(135deg, #ef4444, #06b6d4); }
+        .step-number { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(239, 68, 68, 0.2); color: #ef4444; font-weight: 800; font-size: 0.9rem; flex-shrink: 0; }
         .step-number.cyan { background: rgba(6, 182, 212, 0.15); color: #06b6d4; }
         .step-number.orange { background: rgba(249, 115, 22, 0.15); color: #f97316; }
         .step-number.green { background: rgba(16, 185, 129, 0.15); color: #10b981; }
         .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
-        .code-tag { background: rgba(137,90,246,0.15); border: 1px solid rgba(137,90,246,0.3); color: #a78bfa; border-radius: 6px; padding: 2px 8px; font-size: 0.78em; font-family: monospace; }
+        .code-tag { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #a78bfa; border-radius: 6px; padding: 2px 8px; font-size: 0.78em; font-family: monospace; }
         /* Step tabs */
         .setup-step { display: none; }
         .setup-step.active { display: block; }
         /* Progress */
         .progress-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.1); transition: all 0.3s ease; }
-        .progress-dot.done { background: #895af6; box-shadow: 0 0 8px rgba(137,90,246,0.5); }
-        .progress-dot.active { background: #895af6; box-shadow: 0 0 12px rgba(137,90,246,0.7); transform: scale(1.3); }
+        .progress-dot.done { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.5); }
+        .progress-dot.active { background: #ef4444; box-shadow: 0 0 12px rgba(239,68,68,0.7); transform: scale(1.3); }
         /* Animation */
         .fade-in { animation: fadeIn 0.4s ease; }
         @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
@@ -46,10 +46,10 @@
 
         <!-- Header -->
         <div class="text-center space-y-3 fade-in">
-            <div class="w-16 h-16 accent-gradient rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-purple-500/20">
+            <div class="w-16 h-16 accent-gradient rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-red-500/20">
                 <img src="logo.png" alt="Logo" class="w-10 h-10 object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML='<span class=\'text-white text-2xl font-black\'>C</span>'">
             </div>
-            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight">Bienvenido a <span class="text-transparent bg-clip-text accent-gradient">Clipadsk</span></h1>
+            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight">Bienvenido a <span class="text-transparent bg-clip-text accent-gradient">Clipa Single</span></h1>
             <p class="text-slate-400 text-sm">Configurá todo en 3 pasos antes de empezar.</p>
         </div>
 
@@ -74,7 +74,7 @@
                     <span class="badge ml-auto" style="background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.2)">✓ Gratis</span>
                 </div>
                 <p class="text-sm text-slate-400 leading-relaxed">
-                    Clipadsk usa <b class="text-white">Groq</b> para transcribir audios con IA en segundos. Es necesaria para transcribir — sin ella la herramienta no funciona.
+                    Clipa Single usa <b class="text-white">Groq</b> para transcribir audios con IA en segundos. Es necesaria para transcribir — sin ella la herramienta no funciona.
                 </p>
 
                 <div class="space-y-3">
@@ -99,9 +99,9 @@
                 </div>
 
                 <a href="https://console.groq.com/keys" target="_blank"
-                   class="flex items-center justify-between p-4 bg-white/5 rounded-2xl hover:bg-white/10 transition-all group border border-white/5 hover:border-purple-500/30">
+                   class="flex items-center justify-between p-4 bg-white/5 rounded-2xl hover:bg-white/10 transition-all group border border-white/5 hover:border-red-500/30">
                     <div class="flex items-center gap-3">
-                        <span class="material-symbols-outlined text-purple-400">vpn_key</span>
+                        <span class="material-symbols-outlined text-red-400">vpn_key</span>
                         <div>
                             <p class="text-sm font-bold">Ir a console.groq.com</p>
                             <p class="text-[10px] text-slate-500">Crear cuenta y generar API key</p>
@@ -167,10 +167,10 @@
                             Clic en <span class="code-tag">Export current site cookies</span>. Se descargará un archivo <span class="code-tag">youtube.com_cookies.txt</span>.
                         </div>
                     </div>
-                    <div class="cookie-step" style="border-color:rgba(137,90,246,0.2);background:rgba(137,90,246,0.04)">
-                        <div class="cookie-step-num" style="background:rgba(137,90,246,0.2);color:#a78bfa">5</div>
+                    <div class="cookie-step" style="border-color:rgba(239,68,68,0.2);background:rgba(239,68,68,0.04)">
+                        <div class="cookie-step-num" style="background:rgba(239,68,68,0.2);color:#a78bfa">5</div>
                         <div class="text-sm text-slate-300">
-                            Renombrá el archivo a <span class="code-tag">cookies.txt</span> y colocalo en la <b class="text-white">carpeta raíz de Clipadsk</b> (donde está el <span class="code-tag">iniciar.bat</span>).
+                            Renombrá el archivo a <span class="code-tag">cookies.txt</span> y colocalo en la <b class="text-white">carpeta raíz de Clipa Single</b> (donde está el <span class="code-tag">iniciar.bat</span>).
                         </div>
                     </div>
                 </div>
@@ -185,7 +185,7 @@
                     </div>
                     <div class="p-4 text-xs text-slate-500 space-y-1">
                         <p class="text-slate-300 font-bold text-[11px] mb-2">📁 Estructura de carpetas esperada:</p>
-                        <p class="font-mono">📂 Clipadsk/</p>
+                        <p class="font-mono">📂 Clipa Single/</p>
                         <p class="font-mono ml-4">📄 iniciar.bat</p>
                         <p class="font-mono ml-4 text-emerald-400 font-bold">📄 cookies.txt ← acá</p>
                         <p class="font-mono ml-4">📂 backend/</p>
@@ -244,9 +244,9 @@
                     </a>
                 </div>
 
-                <div class="glass p-5 rounded-2xl border-l-4 border-purple-500 space-y-3">
+                <div class="glass p-5 rounded-2xl border-l-4 border-red-500 space-y-3">
                     <h3 class="font-bold text-sm flex items-center gap-2">
-                        <span class="material-symbols-outlined text-purple-400">checklist</span>
+                        <span class="material-symbols-outlined text-red-400">checklist</span>
                         Orden de instalación
                     </h3>
                     <ol class="text-sm text-slate-400 space-y-2 list-decimal ml-5">
@@ -270,12 +270,12 @@
             </button>
             <div class="flex-1"></div>
             <button id="btn-next" onclick="changeStep(1)"
-                class="accent-gradient px-8 py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-purple-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2">
+                class="accent-gradient px-8 py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-red-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2">
                 Siguiente
                 <span class="material-symbols-outlined text-sm">arrow_forward</span>
             </button>
             <button id="btn-finish" onclick="finishSetup()"
-                class="hidden accent-gradient px-8 py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-purple-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2">
+                class="hidden accent-gradient px-8 py-3.5 rounded-2xl font-bold text-sm shadow-lg shadow-red-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2">
                 <span class="material-symbols-outlined text-sm">rocket_launch</span>
                 ¡Empezar!
             </button>
@@ -290,7 +290,7 @@
     </div>
 
     <script>
-        const SETUP_KEY = 'clipadsk_setup_done';
+        const SETUP_KEY = 'Clipa Single_setup_done';
         const STEPS = 3;
         let currentStep = 0;
 
