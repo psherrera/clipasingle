@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# App specific
+backend/downloads/
+backend/model/
+backend/transcripts_cache.json
+backend/cookies.txt
+backend/NULL
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual Environment
+.venv/
+venv/
+backend/venv/
+
+# App data and caches
+clipadsk.db
+transcripts_cache.json
+transcripts_cache.json.migrated
+
+# Environments
+.env
+
+# Large Binaries and Media
+*.exe
+*.mp4
+*.zip
+*.txt
+!backend/requirements*.txt
+!README.md
+!cookies.txt.example
+
+# Folders
+scratch/
+backend/downloads/
+backend/__pycache__/

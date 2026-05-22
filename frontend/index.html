@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clipadsk - Transcriptor para Periodistas</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#895af6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icon.svg">
+    
+    <link rel="stylesheet" href="style.css?v=3.3">
+    <!-- JSZip: crear archivos .zip en el navegador sin backend -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#895af6",
+                        "accent": "#06b6d4",
+                        "background-dark": "#0a0812",
+                    },
+                    fontFamily: { "display": ["Outfit", "Inter", "sans-serif"] }
+                },
+            },
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+</head>
+
+<body class="bg-background-dark font-display text-slate-100 flex flex-col min-h-screen">
+
+
+
+    <!-- Background Blobs -->
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <!-- Header -->
+    <header class="sticky top-0 z-50 glass border-b border-primary/20 px-6 py-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div class="flex items-center justify-between w-full lg:w-auto">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg overflow-hidden shadow-lg shadow-primary/20">
+                    <img src="logo.png" alt="Clipadsk Logo" class="w-full h-full object-contain">
+                </div>
+                <h1 class="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">Clipadsk</h1>
+            </div>
+            
+            <!-- Mobile status badges right of logo -->
+            <div class="flex items-center gap-3 lg:hidden">
+                <div id="status-badge-mobile" class="flex items-center gap-2 px-3 py-1 bg-slate-800/50 border border-white/5 rounded-full">
+                    <div id="status-dot-mobile" class="w-2 h-2 rounded-full bg-slate-600"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation (Desktop: inline, Mobile: bottom fixed) -->
+        <nav class="fixed bottom-0 left-0 right-0 z-50 glass border-t border-primary/20 px-2 py-3 lg:static lg:bg-transparent lg:border-none lg:p-0 lg:flex-1 lg:ml-8">
+            <div class="max-w-2xl mx-auto lg:mx-0 flex items-center justify-around lg:justify-start overflow-x-auto gap-2 lg:gap-6">
+                <button class="nav-item active flex flex-col lg:flex-row items-center gap-1.5 focus:outline-none min-w-[60px] lg:min-w-0" data-tab="youtube">
+                    <span class="material-symbols-outlined text-[24px] lg:text-[20px]">subscriptions</span>
+                    <span class="text-[11px] lg:text-xs font-extrabold uppercase tracking-wider">YouTube</span>
+                </button>
+
+                <button class="nav-item flex flex-col lg:flex-row items-center gap-1.5 focus:outline-none text-slate-500 hover:text-slate-300 min-w-[60px] lg:min-w-0" data-tab="history">
+                    <span class="material-symbols-outlined text-[24px] lg:text-[20px]">settings</span>
+                    <span class="text-[11px] lg:text-xs font-extrabold uppercase tracking-wider">Config</span>
+                </button>
+            </div>
+        </nav>
+
+        <div class="hidden lg:flex items-center gap-3">
+            <div id="status-badge" class="flex items-center gap-2 px-3 py-1 bg-slate-800/50 border border-white/5 rounded-full">
+                <div id="status-dot" class="w-2 h-2 rounded-full bg-slate-600"></div>
+                <span id="status-text" class="text-xs font-medium text-slate-500">Offline</span>
+            </div>
+            <button id="pwa-install-btn" class="hidden bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all">
+                Instalar App
+            </button>
+            <span id="quality-warning" class="hidden px-3 py-1 bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs rounded-full">⚠️ FFmpeg</span>
+        </div>
+    </header>
+
+    <main class="app-main flex-1 w-full max-w-[1800px] mx-auto px-5 md:px-8 pb-28 lg:pb-4 lg:grid lg:grid-cols-12 lg:gap-8 items-start space-y-8 lg:space-y-0">
+
+        <!-- ═══ IZQUIERDA (Column 1) ═══ -->
+        <div class="app-col-left lg:col-span-5 space-y-6">
+            <!-- Page Title -->
+            <section class="space-y-1">
+                <h2 id="tab-title" class="text-3xl font-extrabold text-white">YouTube Transcriptor</h2>
+                <p id="app-subtitle" class="text-slate-400 text-sm">Transcribí contenido de YouTube con IA.</p>
+            </section>
+
+            <!-- ═══ MAIN INPUT SECTION ═══ -->
+            <section id="main-input-section" class="space-y-4">
+                <div class="glass p-2.5 rounded-2xl flex flex-col gap-3 transition-all focus-within:ring-2 focus-within:ring-primary/20">
+                    <div class="flex-1 flex items-center px-4 gap-4 bg-slate-900/50 rounded-xl border border-white/5 focus-within:border-primary/50 transition-all py-1">
+                        <span class="material-symbols-outlined text-slate-500" id="input-icon">subscriptions</span>
+                        <input type="text" id="video-url"
+                            class="w-full bg-transparent border-none focus:ring-0 py-3 text-slate-100 placeholder:text-slate-600"
+                            placeholder="Pega el enlace aqui..." autocomplete="off">
+                        <button id="clear-url-btn" class="hidden hover:bg-white/10 p-1.5 rounded-lg transition-all text-slate-500 hover:text-white">
+                            <span class="material-symbols-outlined text-lg">close</span>
+                        </button>
+                    </div>
+                    <button id="fetch-info-btn" class="w-full bg-accent hover:bg-accent/90 text-background-dark font-extrabold px-8 py-3.5 rounded-xl flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-lg shadow-accent/20">
+                        <span class="material-symbols-outlined">analytics</span> Analizar
+                    </button>
+                </div>
+
+                <div id="loading-spinner" class="hidden flex flex-col items-center gap-4 py-6">
+                    <div class="w-12 h-12 border-4 border-slate-800 border-t-accent rounded-full animate-spin"></div>
+                    <p class="text-slate-400 animate-pulse text-sm">Procesando enlace...</p>
+                </div>
+            </section>
+
+
+
+            <!-- ═══ HISTORY SECTION ═══ -->
+            <section id="history-section" class="hidden space-y-4">
+                <!-- GROQ API KEY CONFIG -->
+                <div class="glass rounded-2xl p-5 space-y-3 mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary text-xl">key</span>
+                            <h3 class="text-sm font-bold text-white">API Key de Groq (Personal)</h3>
+                        </div>
+                        <a href="https://console.groq.com/keys" target="_blank" class="text-[10px] font-bold text-primary hover:text-white uppercase tracking-widest transition-colors bg-primary/10 hover:bg-primary/50 px-3 py-1.5 rounded-full flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[14px]">help</span> ¿Como obtenerla?
+                        </a>
+                    </div>
+                    <p class="text-xs text-slate-400 leading-relaxed">Configurá tu propia API Key de Groq para evitar límites de uso compartidos. Tus datos se guardan solo en tu navegador.</p>
+                    <div class="flex gap-2">
+                        <input type="password" id="groq-api-key-input" placeholder="gsk_..." class="flex-1 bg-slate-900/80 border border-white/10 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none text-slate-200">
+                        <button id="save-api-key-btn" class="bg-primary hover:bg-primary/90 text-white px-5 py-3 rounded-xl transition-all font-bold text-sm shadow-lg shadow-primary/20">Guardar</button>
+                    </div>
+                </div>
+
+                <!-- SETUP GUIDE LINK -->
+                <div class="glass rounded-2xl p-5 border-l-4 border-accent mb-6">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="space-y-1">
+                            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                                <span class="material-symbols-outlined text-accent text-lg">rocket_launch</span>
+                                ¿Pasar a otra PC?
+                            </h3>
+                            <p class="text-[11px] text-slate-400">Si estás instalando Clipadsk en una computadora nueva, revisa la guía de configuración.</p>
+                        </div>
+                        <a href="setup.html" target="_blank" class="bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 flex-shrink-0">
+                            Ver Guía <span class="material-symbols-outlined text-xs">open_in_new</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- MAINTENANCE & REPAIR -->
+                <div class="glass rounded-2xl p-5 space-y-4 mb-6">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="material-symbols-outlined text-red-400 text-xl">build_circle</span>
+                        <h3 class="text-sm font-bold text-white">Mantenimiento y Reparación</h3>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 gap-3">
+                        <button id="system-update-app-btn" class="bg-white/5 hover:bg-indigo-500/10 border border-white/5 p-4 rounded-xl flex items-center gap-4 transition-all group">
+                            <div class="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center group-hover:bg-indigo-500/20">
+                                <span class="material-symbols-outlined text-indigo-400">update</span>
+                            </div>
+                            <div class="text-left">
+                                <p class="text-sm font-bold text-white">Actualizar Aplicación</p>
+                                <p class="text-[10px] text-slate-500">Descarga los últimos arreglos desde GitHub</p>
+                            </div>
+                        </button>
+
+                        <button id="system-update-engine-btn" class="bg-white/5 hover:bg-amber-500/10 border border-white/5 p-4 rounded-xl flex items-center gap-4 transition-all group">
+                            <div class="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center group-hover:bg-amber-500/20">
+                                <span class="material-symbols-outlined text-amber-400">settings_suggest</span>
+                            </div>
+                            <div class="text-left">
+                                <p class="text-sm font-bold text-white">Actualizar Motor (yt-dlp)</p>
+                                <p class="text-[10px] text-slate-500">Arregla fallos de descarga de YouTube</p>
+                            </div>
+                        </button>
+
+                        <button id="system-reset-btn" class="bg-white/5 hover:bg-red-500/10 border border-white/5 p-4 rounded-xl flex items-center gap-4 transition-all group">
+                            <div class="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center group-hover:bg-red-500/20">
+                                <span class="material-symbols-outlined text-red-400">restart_alt</span>
+                            </div>
+                            <div class="text-left">
+                                <p class="text-sm font-bold text-white">Limpiar Temporales</p>
+                                <p class="text-[10px] text-slate-500">Borra archivos locales para liberar espacio</p>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-bold text-white">Transcripciones guardadas</h3>
+                    <button onclick="const h=getHistory();if(h.length&&confirm('Borrar todo el historial?')){localStorage.removeItem('clipadsk_history');document.getElementById('history-list').innerHTML='';}" class="text-xs text-red-400 hover:text-red-300 transition-colors">Borrar todo</button>
+                </div>
+                <div id="history-list" class="space-y-3"></div>
+            </section>
+
+            <!-- ═══ VIDEO RESULTS CARD ═══ -->
+            <section id="video-info-card" class="glass rounded-3xl overflow-hidden hidden fade-in shadow-2xl">
+                <div class="flex flex-col divide-y divide-white/5">
+                    <!-- Thumbnail -->
+                    <div class="relative aspect-video bg-black/40 flex items-center justify-center">
+                        <img id="video-thumbnail" src="" alt="Miniatura" class="w-full h-full object-contain drop-shadow-2xl" referrerpolicy="no-referrer">
+                        <div id="video-duration" class="absolute bottom-4 right-4 bg-black/80 px-2 py-1 rounded-md text-xs font-bold text-white shadow-lg">0:00</div>
+                    </div>
+                    <!-- Info -->
+                    <div class="p-7 flex flex-col space-y-5">
+                        <div class="space-y-3">
+                            <h3 id="video-title" class="text-xl font-bold leading-tight text-white line-clamp-2">Titulo del Video</h3>
+                            <div class="flex items-center gap-2">
+                                <span class="bg-primary/20 text-primary px-3 py-1 rounded-full text-xs font-bold" id="video-uploader">Canal</span>
+                            </div>
+                            <p id="video-description" class="text-slate-400 text-sm line-clamp-2"></p>
+                        </div>
+                        <div class="space-y-4 pt-2">
+                            <div class="flex flex-col gap-2">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Formato de salida</label>
+                                <div class="relative">
+                                    <select id="format-select" class="w-full bg-slate-900/50 border border-white/10 rounded-xl py-3.5 px-4 text-slate-200 appearance-none focus:ring-2 focus:ring-primary cursor-pointer"></select>
+                                    <span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">expand_more</span>
+                                </div>
+                            </div>
+                            <div class="flex flex-col gap-2 mt-2">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Recortar Video (Opcional)</label>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div class="relative">
+                                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-[11px] font-bold">Desde:</span>
+                                        <input type="text" id="clip-start" placeholder="00:00" class="w-full bg-slate-900/50 border border-white/10 rounded-xl py-3 pl-14 pr-3 text-sm text-slate-200 focus:ring-2 focus:ring-primary outline-none" autocomplete="off">
+                                    </div>
+                                    <div class="relative">
+                                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-[11px] font-bold">Hasta:</span>
+                                        <input type="text" id="clip-end" placeholder="00:00" class="w-full bg-slate-900/50 border border-white/10 rounded-xl py-3 pl-14 pr-3 text-sm text-slate-200 focus:ring-2 focus:ring-primary outline-none" autocomplete="off">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex flex-col gap-3">
+                                <button id="download-btn" class="glow-button w-full py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all">
+                                    <span class="material-symbols-outlined">download</span> Descargar Video
+                                </button>
+
+                                <div class="space-y-2">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Idioma de salida (IA)</label>
+                                    <div class="grid grid-cols-3 gap-2">
+                                        <button class="lang-btn active py-2 rounded-lg border border-primary/40 bg-primary/10 text-xs font-bold transition-all flex items-center justify-center gap-1" data-lang="es">
+                                            <span class="text-[14px]">🇪🇸</span> ES
+                                        </button>
+                                        <button class="lang-btn py-2 rounded-lg border border-white/10 bg-white/5 text-slate-400 text-xs font-bold transition-all flex items-center justify-center gap-1" data-lang="en">
+                                            <span class="text-[14px]">🇺🇸</span> EN
+                                        </button>
+                                        <button class="lang-btn py-2 rounded-lg border border-white/10 bg-white/5 text-slate-400 text-xs font-bold transition-all flex items-center justify-center gap-1" data-lang="original">
+                                            <span class="text-[14px]">🎬</span> Org.
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+
+                                    <button id="show-transcript-btn" class="hidden bg-white/5 hover:bg-white/10 border border-white/5 py-3 rounded-xl text-slate-300 font-bold text-sm flex items-center justify-center gap-2 transition-all">
+                                        <span class="material-symbols-outlined text-lg">description</span> Transcribir
+                                    </button>
+                                    <button id="download-thumb-btn" class="bg-white/5 hover:bg-white/10 border border-white/5 py-3 rounded-xl text-slate-300 font-bold text-sm flex items-center justify-center gap-2 transition-all">
+                                        <span class="material-symbols-outlined text-lg">image</span> Miniatura
+                                    </button>
+                                </div>
+                                <button id="download-txt-btn" class="hidden bg-white/5 hover:bg-white/10 border border-white/5 py-3 rounded-xl text-slate-300 font-bold text-sm flex items-center justify-center gap-2 transition-all">
+                                    <span class="material-symbols-outlined text-lg">folder_zip</span> Descargar .zip
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div id="download-progress" class="hidden p-7 border-t border-white/5 flex flex-col gap-4">
+                    <div class="flex justify-between items-center text-xs font-bold">
+                        <span id="progress-text" class="text-slate-400">Descargando...</span>
+                        <span class="text-accent" id="progress-percentage">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden">
+                        <div class="progress-fill bg-accent h-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- ═══ DERECHA (Column 2) ═══ -->
+        <div class="app-col-right lg:col-span-7 space-y-8 h-full">
+            
+            <!-- Panel de Transcripción y Herramientas -->
+            <section id="transcript-section" class="hidden glass rounded-3xl p-7 space-y-5 fade-in shadow-2xl h-full flex flex-col">
+                <div class="flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-3">
+                        <span class="bg-accent/20 text-accent p-1.5 rounded-lg flex items-center"><span class="material-symbols-outlined text-sm">translate</span></span>
+                        <h4 class="font-extrabold text-white text-lg">Transcripción con IA</h4>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="copy-transcript-btn" class="bg-accent/20 hover:bg-accent/30 text-accent px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2">
+                            <span class="material-symbols-outlined text-sm">content_copy</span> COPIAR
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ★ Herramientas Periodísticas — aparecen PRIMERO, destacadas -->
+                <div id="journalist-tools-wrapper" class="hidden pb-4 border-b border-white/10 shrink-0">
+                    <!-- Se inyecta dinámicamente -->
+                </div>
+
+                <!-- Texto de la transcripción -->
+                <div id="transcript-content" class="transcript-body text-slate-400 text-sm leading-relaxed overflow-y-auto pr-2 flex-1 min-h-[200px]">
+                    <p class="animate-pulse">Cargando transcripción...</p>
+                </div>
+
+                <!-- Chat con el video -->
+                <div id="ai-chat-section" class="hidden pt-5 border-t border-white/10 space-y-4 shrink-0">
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-primary text-lg">smart_toy</span>
+                        <span class="text-xs font-bold text-slate-500 uppercase tracking-widest">Consultar con IA</span>
+                    </div>
+                    <!-- Historial de conversación -->
+                    <div id="chat-history" class="space-y-3 max-h-[320px] overflow-y-auto pr-1"></div>
+                    <!-- Input oculto para compatibilidad con código existente -->
+                    <div id="chat-response" class="hidden"></div>
+                    <div class="flex gap-2">
+                        <input type="text" id="chat-input" placeholder="¿Sobre qué trata el video? Hacé una pregunta..." 
+                            class="flex-1 bg-slate-900/80 border border-white/10 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none">
+                        <button id="chat-send-btn" class="bg-primary hover:bg-primary/90 text-white px-5 rounded-xl transition-all flex items-center justify-center">
+                            <span class="material-symbols-outlined">send</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+    </main>
+
+    <!-- Bottom Nav eliminado ya que se integró en el header -->
+
+    <script src="main.js?v=3.3" defer></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('PWA Ready:', reg.scope))
+                    .catch(err => console.log('PWA Error:', err));
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,1280 @@
+"""
+YT Downloader Pro - Backend
+Optimized for Render.com deployment.
+Features: 
+- Heavy dependency removal (Whisper/Torch).
+- Groq API & YouTube Subtitle fallback for transcription.
+- Robust Bot-Evasion strategy using mobile client emulation.
+- Automated cleanup of downloaded files.
+"""
+# --- CONFIGURACION DE RUTAS ---
+import os
+import sys
+import subprocess
+import re
+
+import uuid
+import json
+import gc
+import tempfile
+import yt_dlp
+import requests
+from typing import Optional, List, Any
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from deep_translator import GoogleTranslator
+from fastapi import Response
+from fastapi.staticfiles import StaticFiles
+import asyncio
+import base64
+import random
+import time
+import sqlite3
+import logging
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import functools
+try:
+    from pydub import AudioSegment
+except ImportError:
+    AudioSegment = None
+
+try:
+    from faster_whisper import WhisperModel
+    WHISPER_MODEL_AVAILABLE = True
+except ImportError:
+    WhisperModel = None
+    WHISPER_MODEL_AVAILABLE = False
+
+from dotenv import load_dotenv
+
+# --- LOGGING (configured early so other modules can use logger) ---
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+import logging
+logging.basicConfig(level=LOG_LEVEL, format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
+logger = logging.getLogger('clipadsk')
+
+# --- AÑADIR RAÍZ AL PATH PARA ENCONTRAR FFMPEG SI ESTÁ AHÍ ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+FFMPEG_BIN = None
+
+# Buscar en raiz, luego en backend, luego en sistema
+for d in [ROOT_DIR, BASE_DIR]:
+    if os.path.exists(os.path.join(d, "ffmpeg.exe")):
+        FFMPEG_BIN = os.path.join(d, "ffmpeg.exe")
+        os.environ["PATH"] += os.pathsep + d
+        if AudioSegment:
+            AudioSegment.converter = FFMPEG_BIN
+            logger.debug(f"Pydub configurado con FFmpeg en {FFMPEG_BIN}")
+        break
+# -----------------------------------------------------------
+# --- CONFIGURACIÓN DE ENTORNO ---
+load_dotenv() # Cargar variables desde .env
+IS_RENDER = os.environ.get('RENDER') is not None
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
+WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL', 'small')
+WHISPER_MODEL = None
+
+try:
+    from groq import Groq
+    groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+except ImportError:
+    groq_client = None
+
+app = FastAPI(title="YT Downloader Pro API")
+
+# --- BACKGROUND EXECUTOR ---
+MAX_WORKERS = int(os.environ.get('MAX_WORKERS', '3'))
+MAX_CONCURRENT_JOBS = int(os.environ.get('MAX_CONCURRENT_JOBS', '2'))
+EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+
+async def run_blocking(fn: Any, *args, **kwargs):
+    """Run a blocking function in a controlled threadpool with semaphore."""
+    async with SEMAPHORE:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(EXECUTOR, functools.partial(fn, *args, **kwargs))
+
+
+def extract_info_sync(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+def ydl_download_sync(opts, url):
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+
+
+def requests_get_sync(url, **kwargs):
+    return requests.get(url, **kwargs)
+
+# Configuración de CORS
+allowed = os.environ.get('FRONTEND_ALLOWED_ORIGINS')
+if allowed:
+    allow_list = [o.strip() for o in allowed.split(',') if o.strip()]
+else:
+    allow_list = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- MIDDLEWARE DE LOGGING ---
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Logeamos solo peticiones a la API para no saturar con estáticos
+    if request.url.path.startswith("/api/"):
+        logger.debug(f"API request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    return response
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Si se provee FRONTEND_DIR por env (Docker/Render), la usamos prioritariamente
+FRONTEND_DIR = os.environ.get('FRONTEND_DIR')
+
+# Fallback local: El ROOT_DIR del proyecto Pro es el padre de backend/
+ROOT_DIR = os.path.dirname(BASE_DIR)
+
+if not FRONTEND_DIR:
+    FRONTEND_DIR = os.path.join(ROOT_DIR, 'frontend')
+
+DOWNLOAD_FOLDER = os.path.join(BASE_DIR, 'downloads')
+CACHE_FILE = os.path.join(BASE_DIR, 'transcripts_cache.json')
+
+if not os.path.exists(DOWNLOAD_FOLDER):
+    os.makedirs(DOWNLOAD_FOLDER)
+
+# --- ROBUSTEZ FFMPEG ---
+ffmpeg_extra_paths = [
+    ROOT_DIR,
+    os.path.join(ROOT_DIR, 'bin'),
+    r'C:\Program Files\Red Giant\Trapcode Suite\Tools',
+    r'C:\Program Files\SnapDownloader\resources\win',
+]
+current_path = os.environ.get("PATH", "")
+nuevo_path = current_path
+for p in ffmpeg_extra_paths:
+    if os.path.exists(p) and p not in nuevo_path:
+        nuevo_path = p + os.pathsep + nuevo_path
+os.environ["PATH"] = nuevo_path
+
+# --- BASE DE DATOS (SQLite) ---
+DB_FILE = os.path.join(BASE_DIR, 'clipadsk.db')
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS transcripts 
+                 (url TEXT PRIMARY KEY, transcript TEXT, date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # Migración desde JSON antiguo si existe
+    if os.path.exists(CACHE_FILE):
+        logger.info("Migrando historial de JSON a SQLite...")
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                old_data = json.load(f)
+                for url, text in old_data.items():
+                    c.execute("INSERT OR IGNORE INTO transcripts (url, transcript) VALUES (?, ?)", (url, text))
+            conn.commit()
+            # Renombrar archivo viejo para evitar re-migración
+            os.rename(CACHE_FILE, CACHE_FILE + ".migrated")
+            logger.info("Migración completada con éxito.")
+        except Exception as e:
+            logger.exception("Error en migración de cache JSON a SQLite")
+    conn.close()
+
+# Inicializar DB al arrancar
+init_db()
+
+def load_cache():
+    """Mantiene compatibilidad con el código existente pero lee de SQLite."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT url, transcript FROM transcripts")
+        rows = c.fetchall()
+        conn.close()
+        return {row[0]: row[1] for row in rows}
+    except Exception as e:
+        logger.exception("Error leyendo cache desde SQLite")
+        return {}
+
+def save_cache_entry(url, transcript):
+    """Guarda una entrada individual en la DB."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO transcripts (url, transcript) VALUES (?, ?)", (url, transcript))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.exception("Error guardando entrada en SQLite")
+
+def save_cache(cache):
+    """Mantiene compatibilidad (aunque es menos eficiente que save_cache_entry)."""
+    # En el flujo actual, save_cache se llama con todo el dict.
+    # Para SQLite es mejor guardar solo el nuevo, pero para no romper el flujo:
+    for url, text in cache.items():
+        save_cache_entry(url, text)
+
+
+# --- TRADUCCIÓN ---
+def translate_to_spanish(text):
+    if not text: return ""
+    try:
+        translator = GoogleTranslator(source='auto', target='es')
+        if len(text) > 4000:
+            chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+            translated = [translator.translate(c) for c in chunks]
+            return " ".join(translated)
+        return translator.translate(text)
+    except Exception as e:
+        logger.exception("Error en traducción")
+        return text
+
+def get_local_groq(api_key: str = None):
+    if api_key and api_key.strip():
+        try:
+            from groq import Groq
+            return Groq(api_key=api_key.strip())
+        except Exception:
+            return groq_client
+    return groq_client
+
+
+def get_whisper_model():
+    global WHISPER_MODEL
+    if not WHISPER_MODEL_AVAILABLE:
+        return None
+    if WHISPER_MODEL is None:
+        try:
+            logger.info(f"Cargando modelo Whisper local: {WHISPER_MODEL_SIZE}")
+            WHISPER_MODEL = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+        except Exception as e:
+            logger.exception(f"No se pudo cargar el modelo Whisper local: {e}")
+            WHISPER_MODEL = None
+    return WHISPER_MODEL
+
+
+def transcribe_with_local_whisper(audio_file_path: str, target_lang: str = "es") -> str:
+    model = get_whisper_model()
+    if not model:
+        raise RuntimeError("No hay modelo Whisper local disponible. Instala faster-whisper para usar este modo.")
+
+    logger.info(f"Transcribiendo audio local con Whisper ({target_lang})...")
+    segments, info = model.transcribe(
+        audio_file_path,
+        beam_size=5,
+        vad_filter=True,
+        language=target_lang if target_lang in ["es", "en"] else None
+    )
+    transcription = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+    logger.info(f"Transcripción local completada. Duración aprox: {getattr(info, 'duration', 'desconocida')}s")
+    return transcription
+
+
+def remove_repetitions(text: str) -> str:
+    """
+    Elimina repeticiones de frases que Whisper (y subtítulos VTT) generan.
+    Usa un algoritmo de ventana deslizante que no consume tokens de Groq.
+    Ejemplo de entrada:  "Cómo andan tanto tiempo Cómo andan tanto tiempo los extrañé"
+    Ejemplo de salida:   "Cómo andan tanto tiempo los extrañé"
+    """
+    if not text or len(text) < 30:
+        return text
+
+    words = text.split()
+    if len(words) < 6:
+        return text
+
+    result = []
+    i = 0
+    MAX_PHRASE = min(30, len(words) // 2)
+
+    while i < len(words):
+        found_repeat = False
+        # Probar ventanas desde las más grandes a las más pequeñas
+        for phrase_len in range(MAX_PHRASE, 3, -1):
+            if i + phrase_len * 2 > len(words):
+                continue
+            phrase = words[i:i + phrase_len]
+            next_phrase = words[i + phrase_len:i + phrase_len * 2]
+            if phrase == next_phrase:
+                result.extend(phrase)
+                i += phrase_len
+                # Colapsar repeticiones consecutivas adicionales del mismo fragmento
+                while i + phrase_len <= len(words) and words[i:i + phrase_len] == phrase:
+                    i += phrase_len
+                found_repeat = True
+                break
+        if not found_repeat:
+            result.append(words[i])
+            i += 1
+
+    cleaned = ' '.join(result)
+    logger.debug(f"remove_repetitions: {len(words)} palabras → {len(result)} palabras")
+    return cleaned
+
+
+def cleanup_transcript_with_ai(text: str, client=None, target_lang="es", is_local_video=False) -> str:
+    """Usa la IA para limpiar repeticiones, corregir puntuación y añadir párrafos en el idioma elegido."""
+    actual_client = client or groq_client
+    if not actual_client or len(text) < 50:
+        return text
+
+    if len(text) > 40000:
+        logger.info(f"Transcripción muy larga ({len(text)} caracteres). Omitiendo limpieza IA para evitar límites de API.")
+        return text
+    
+    lang_name = "Español" if target_lang == "es" else ("Inglés" if target_lang == "en" else "el idioma original del video")
+    
+    try:
+        max_chunk_length = 6000
+        if len(text) > max_chunk_length:
+            chunks = [text[i:i+max_chunk_length] for i in range(0, len(text), max_chunk_length)]
+            cleaned_chunks = []
+            for chunk in chunks:
+                if is_local_video:
+                    prompt = f"""Actúa como un corrector de estilo estricto. Tu único objetivo es tomar esta transcripción cruda y aplicar correcciones ortotipográficas para facilitar su lectura, manteniendo el 100% del contenido original hablado.
+
+Instrucciones de edición:
+
+Preservación absoluta: NO resumas, NO unifiques temas, NO omitas redundancias ni cambies las palabras del entrevistado o entrevistador. Los periodistas necesitan la desgrabación exacta para extraer sus propias citas.
+
+Corrección de formato: Limítate a corregir puntuación (comas, puntos, signos de interrogación), uso de mayúsculas y separar correctamente los párrafos para que el bloque de texto sea legible.
+
+Limpieza mínima: Solo puedes limpiar tartamudeos o muletillas extremas (ej. "eh...", "este...") si interrumpen gravemente la lectura, pero no debes eliminar ninguna anécdotas, dato repetido o interacción de la mesa.
+
+Regla estricta de formato (Cero Artefactos):
+Tu respuesta debe contener ÚNICAMENTE la desgrabación procesada. Está estrictamente prohibido incluir saludos, introducciones (como "Aquí tienes la desgrabación" o "Texto corregido:"), viñetas explicativas o conclusiones al final. Empieza directamente con la primera palabra de la entrevista y termina con el último punto.
+
+Procesa el texto que se encuentra a continuación entre las etiquetas [INICIO DEL TEXTO] y [FIN DEL TEXTO]:
+
+[INICIO DEL TEXTO]
+{chunk}
+[FIN DEL TEXTO]"""
+                else:
+                    prompt = f"""Sos un editor experto. Tu tarea es LIMPIAR y FORMATEAR esta parte de una transcripción.
+                    1. ELIMINÁ repeticiones de frases.
+                    2. AGREGÁ puntuación (comas, puntos).
+                    3. DIVIDÍ en párrafos con doble salto de línea.
+                    4. EL IDIOMA DE SALIDA DEBE SER: {lang_name}.
+                    5. NO RESUMAS, mantené el contenido original.
+                    TEXTO:
+                    {chunk}"""
+                completion = actual_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=4000,
+                )
+                cleaned_chunks.append(completion.choices[0].message.content.strip())
+            return "\n\n".join(cleaned_chunks)
+        else:
+            if is_local_video:
+                prompt = f"""Actúa como un corrector de estilo estricto. Tu único objetivo es tomar esta transcripción cruda y aplicar correcciones ortotipográficas para facilitar su lectura, manteniendo el 100% del contenido original hablado.
+
+Instrucciones de edición:
+
+Preservación absoluta: NO resumas, NO unifiques temas, NO omitas redundancias ni cambies las palabras del entrevistado o entrevistador. Los periodistas necesitan la desgrabación exacta para extraer sus propias citas.
+
+Corrección de formato: Limítate a corregir puntuación (comas, puntos, signos de interrogación), uso de mayúsculas y separar correctamente los párrafos para que el bloque de texto sea legible.
+
+Limpieza mínima: Solo puedes limpiar tartamudeos o muletillas extremas (ej. "eh...", "este...") si interrumpen gravemente la lectura, pero no debes eliminar ninguna anécdotas, dato repetido o interacción de la mesa.
+
+Regla estricta de formato (Cero Artefactos):
+Tu respuesta debe contener ÚNICAMENTE la desgrabación procesada. Está estrictamente prohibido incluir saludos, introducciones (como "Aquí tienes la desgrabación" o "Texto corregido:"), viñetas explicativas o conclusiones al final. Empieza directamente con la primera palabra de la entrevista y termina con el último punto.
+
+Procesa el texto que se encuentra a continuación entre las etiquetas [INICIO DEL TEXTO] y [FIN DEL TEXTO]:
+
+[INICIO DEL TEXTO]
+{text}
+[FIN DEL TEXTO]"""
+            else:
+                prompt = f"""Sos un editor experto. Tu tarea es LIMPIAR y FORMATEAR la siguiente transcripción de un video.
+                1. ELIMINÁ repeticiones de frases.
+                2. AGREGÁ puntuación correcta (comas, puntos).
+                3. DIVIDÍ el texto en párrafos lógicos con doble salto de línea.
+                4. EL IDIOMA DE SALIDA DEBE SER: {lang_name}.
+                5. NO RESUMAS, mantené el contenido original.
+                TRANSCRIPCIÓN:
+                {text}"""
+            completion = actual_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=4000,
+            )
+            return completion.choices[0].message.content.strip()
+    except Exception as e:
+        logger.exception("Error limpiando transcripción con IA")
+        return text
+
+
+# --- PROGRESO GLOBAL ---
+progress_store = {}
+
+def update_progress(uid: str, progress: int, text: str):
+    if uid:
+        progress_store[uid] = {"progress": progress, "text": text}
+        add_log(uid, f"Progreso {progress}%: {text}")
+
+# --- LOGS DE ERROR PARA SOPORTE ---
+log_store = {}
+
+def add_log(uid: str, message: str):
+    if not uid: return
+    if uid not in log_store: log_store[uid] = []
+    timestamp = time.strftime("%H:%M:%S")
+    log_store[uid].append(f"[{timestamp}] {message}")
+    logger.debug(f"LOG [{uid}]: {message}")
+
+def get_session_logs(uid: str) -> str:
+    return "\n".join(log_store.get(uid, ["No hay logs disponibles para esta sesion."]))
+
+@app.get("/api/progress/{uid}")
+async def get_progress(uid: str):
+    return progress_store.get(uid, {"progress": 0, "text": "Procesando en el servidor..."})
+
+# --- MODELOS DE DATOS ---
+class VideoRequest(BaseModel):
+    url: str
+    format_id: Optional[str] = "best"
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    groq_api_key: Optional[str] = None
+    uid: Optional[str] = None
+    target_lang: Optional[str] = "es" # es, en, original
+
+@app.get("/api/logs/{uid}")
+async def get_logs(uid: str):
+    return JSONResponse(content={"logs": get_session_logs(uid)})
+
+
+
+
+# --- ENDPOINTS ---
+
+
+
+# --- SANITIZACIÓN DE URLS ---
+def sanitize_url(url: str) -> str:
+    """
+    Normaliza URLs de video antes de pasarlas a yt-dlp.
+    Problemas que resuelve:
+    - youtu.be/ID?si=... → youtube.com/watch?v=ID
+    - watch?v=ID&feature=youtu.be → watch?v=ID
+    - Elimina parámetros de tracking/referral que confunden a yt-dlp
+    """
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    url = url.strip()
+
+    try:
+        parsed = urlparse(url)
+        
+        # Convertir youtu.be → youtube.com/watch?v=
+        if parsed.netloc in ('youtu.be', 'www.youtu.be'):
+            video_id = parsed.path.lstrip('/')
+            if video_id:
+                url = f"https://www.youtube.com/watch?v={video_id}"
+                parsed = urlparse(url)
+        
+        # Para URLs de YouTube, limpiar parámetros no esenciales
+        if 'youtube.com' in parsed.netloc:
+            qs = parse_qs(parsed.query, keep_blank_values=False)
+            # Solo conservar v, list, index, t (tiempo)
+            clean_params = {k: v for k, v in qs.items() if k in ('v', 'list', 'index', 't')}
+            new_query = urlencode({k: v[0] for k, v in clean_params.items()})
+            url = urlunparse(parsed._replace(query=new_query))
+    except Exception as e:
+        logger.debug(f"sanitize_url error, usando original: {e}")
+
+    logger.debug(f"URL sanitizada → {url}")
+    return url
+
+
+def get_robust_opts(target_url, extra={}):
+    """Genera opciones unificadas para yt-dlp con soporte para cookies locales y de entorno."""
+    USER_AGENTS = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1'
+    ]
+
+    is_instagram = 'instagram.com' in target_url
+    is_youtube = 'youtube.com' in target_url or 'youtu.be' in target_url
+    is_tiktok = 'tiktok.com' in target_url or 'vm.tiktok.com' in target_url
+    is_twitter = 'twitter.com' in target_url or 'x.com' in target_url or 't.co' in target_url
+    is_facebook = 'facebook.com' in target_url or 'fb.watch' in target_url or 'fb.com' in target_url
+
+    cookie_path = os.path.join(BASE_DIR, 'cookies.txt')
+    ig_cookie_path = os.path.join(BASE_DIR, 'cookies_ig.txt')
+
+    opts = {
+        'quiet': False,
+        'no_warnings': False,
+        'cachedir': False,
+        'noplaylist': True,
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'user_agent': random.choice(USER_AGENTS),
+        **extra
+    }
+
+    # Seleccionar cookies según plataforma
+    if is_instagram:
+        cookie_b64 = os.environ.get('INSTAGRAM_COOKIES_B64') or os.environ.get('COOKIES_B64')
+        local_paths = ['/etc/secrets/cookies_ig.txt', ig_cookie_path]
+    else:
+        cookie_b64 = os.environ.get('COOKIES_B64')
+        local_paths = ['/etc/secrets/cookies.txt', cookie_path]
+
+    # Cargar cookies desde variable de entorno
+    if cookie_b64:
+        try:
+            cookie_data = base64.b64decode(cookie_b64).decode()
+            temp_cookie = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            temp_cookie.write(cookie_data)
+            temp_cookie.close()
+            opts['cookiefile'] = temp_cookie.name
+            platform = 'Instagram' if is_instagram else 'YouTube'
+            logger.debug(f"Cargando cookies [{platform}] desde variable de entorno (Temp: {temp_cookie.name})")
+        except Exception as e:
+            logger.exception("Error cargando cookies desde variable de entorno")
+
+    # Fallback a archivo local
+    if 'cookiefile' not in opts:
+        for path_candidate in local_paths:
+            if os.path.exists(path_candidate):
+                logger.debug(f"Cargando cookies desde archivo {path_candidate}")
+                opts['cookiefile'] = path_candidate
+                break
+
+    # Estrategia específica por plataforma
+    if is_youtube:
+        # Dejamos que yt-dlp use sus clientes por defecto (web, tv, etc.) para que encuentre todas las calidades (1080p, 720p)
+        opts['user_agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1'
+        logger.debug(f"Estrategia YouTube optimizada (Cookies: {'Si' if 'cookiefile' in opts else 'No'})")
+
+    elif is_tiktok:
+        # TikTok requiere user-agent móvil y headers específicos
+        opts['user_agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1'
+        opts['http_headers'] = {
+            'Referer': 'https://www.tiktok.com/',
+            'Accept-Language': 'es-419,es;q=0.9,en;q=0.8',
+        }
+
+    elif is_twitter:
+        # Twitter/X funciona mejor con user-agent desktop Chrome reciente
+        opts['user_agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+    elif is_facebook:
+        # Facebook requiere cookies para la mayoría del contenido público
+        opts['user_agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+    return opts
+
+
+# --- ENDPOINTS ---
+
+@app.post("/api/video-info")
+async def get_video_info(req: VideoRequest, request: Request):
+    url = sanitize_url(req.url)
+    is_youtube = 'youtube.com' in url or 'youtu.be' in url
+
+    info = None
+    last_error = ""
+    
+    # --- INTENTO 1: Estrategia Optimizada (Basada en get_robust_opts) ---
+    try:
+        logger.debug("Intento 1 - Estrategia optimizada...")
+        opts = get_robust_opts(url)
+        info = await run_blocking(extract_info_sync, opts, url)
+    except Exception as e:
+        last_error = str(e)
+        logger.debug(f"Intento 1 falló: {last_error[:100]}")
+
+    # --- INTENTO 2: Forzar Móvil SIN COOKIES (Para saltar n-challenge) ---
+    if not info and is_youtube:
+        try:
+            logger.debug("Intento 2 - Forzando móvil SIN cookies...")
+            opts = get_robust_opts(url)
+            opts.pop('cookiefile', None) # Quitamos cookies para que no las ignore
+            opts['extractor_args'] = {'youtube': {'player_client': ['android', 'ios']}}
+            info = await run_blocking(extract_info_sync, opts, url)
+        except Exception as e:
+            last_error += f" | Intento 2: {str(e)[:100]}"
+            logger.debug(f"Intento 2 falló: {str(e)[:100]}")
+
+    # --- INTENTO 3: Forzar iOS (Último recurso) ---
+    if not info and is_youtube:
+        try:
+            logger.debug("Intento 3 - Forzando solo iOS...")
+            opts = get_robust_opts(url)
+            opts.pop('cookiefile', None)
+            opts['extractor_args'] = {'youtube': {'player_client': ['ios']}}
+            info = await run_blocking(extract_info_sync, opts, url)
+        except Exception as e:
+            last_error += f" | Intento 3: {str(e)[:100]}"
+            logger.debug(f"Intento 3 falló: {str(e)[:100]}")
+
+    if not info:
+        logger.error(f"EXTRACT_INFO FAILED for {url}.")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"No pudimos procesar este video. Puede ser privado o YouTube bloqueó la conexión. Errores: {last_error[:200]}"
+        )
+
+    # Procesar formatos
+    formats = []
+    seen_res = set()
+    all_formats = info.get('formats', [])
+    useful_formats = [f for f in all_formats if f.get('vcodec') != 'none']
+    useful_formats.sort(key=lambda x: (x.get('height') or 0), reverse=True)
+
+    for f in useful_formats:
+        res = f.get('resolution') or f"{f.get('height')}p"
+        if res == "Nonep" or not f.get('height'):
+            res = f.get('format_note') or f.get('format_id') or "Calidad única"
+        
+        ext = f.get('ext', 'mp4')
+        res_key = f"{res}_{ext}"
+        if res_key not in seen_res:
+            formats.append({
+                'format_id': f.get('format_id'),
+                'ext': ext,
+                'resolution': res,
+                'filesize': f.get('filesize') or f.get('filesize_approx'),
+                'label': f"{res} (.{ext})"
+            })
+            seen_res.add(res_key)
+
+    # Si no hay formatos (Shorts, videos con DRM, etc.), agregar opción genérica
+    if not formats:
+        formats.append({
+            'format_id': 'best',
+            'ext': 'mp4',
+            'resolution': 'Mejor calidad',
+            'filesize': None,
+            'label': 'Mejor calidad (.mp4)'
+        })
+
+    thumbnail = info.get('thumbnail')
+
+    return {
+        'title': info.get('title'),
+        'thumbnail': thumbnail,
+        'max_res_thumbnail': thumbnail,
+        'duration': info.get('duration'),
+        'uploader': info.get('uploader') or "Desconocido",
+        'description': (info.get('description') or 'Sin descripción')[:200] + '...',
+        'formats': formats,
+        'has_ffmpeg': True, # En Docker siempre tenemos FFmpeg
+        'has_subtitles': bool(info.get('subtitles') or info.get('automatic_captions'))
+    }
+
+@app.post("/api/transcript")
+async def get_transcript(req: VideoRequest):
+    url = sanitize_url(req.url)
+    uid = req.uid
+    lang = req.target_lang or "es"
+    
+    add_log(uid, f"Iniciando transcripcion para: {url} | Idioma: {lang}")
+    
+    is_youtube = 'youtube.com' in url or 'youtu.be' in url
+    
+    # Cache por URL e Idioma
+    cache_key = f"{url}_{lang}"
+    cache = load_cache()
+    if cache_key in cache:
+        add_log(uid, "Resultado recuperado de cache local.")
+        return {"transcript": cache[cache_key], "method": "cache"}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            local_groq = get_local_groq(req.groq_api_key)
+            if is_youtube:
+                add_log(uid, "Intentando extraer subtitulos de YouTube...")
+                # --- INTENTO DE SUBS CON 3 ESTRATEGIAS ---
+                sub_extracted = False
+
+                
+                # 1. Celular sin cookies
+                try:
+                    update_progress(req.uid, 10, "Buscando subtítulos (1/2)...")
+                    opts = get_robust_opts(url, {'skip_download': True, 'writesubtitles': True, 'writeautomaticsub': True, 'subtitleslangs': ['es.*', 'en.*'], 'outtmpl': os.path.join(tmpdir, 'sub.%(ext)s'), 'ignoreerrors': True})
+                    opts.pop('cookiefile', None)
+                    opts['extractor_args'] = {'youtube': {'player_client': ['android', 'ios']}}
+                    await run_blocking(ydl_download_sync, opts, url)
+                    sub_extracted = True
+                except: pass
+
+                # 2. Con cookies
+                if not sub_extracted:
+                    try:
+                        update_progress(req.uid, 20, "Buscando subtítulos (2/2)...")
+                        opts = get_robust_opts(url, {'skip_download': True, 'writesubtitles': True, 'writeautomaticsub': True, 'subtitleslangs': ['es.*', 'en.*'], 'outtmpl': os.path.join(tmpdir, 'sub.%(ext)s'), 'ignoreerrors': True})
+                        await run_blocking(ydl_download_sync, opts, url)
+                        sub_extracted = True
+                    except: pass
+
+                sub_file = None
+                is_english = False
+                for f in os.listdir(tmpdir):
+                    if f.startswith('sub.') and ('.es' in f or '.es-419' in f):
+                        sub_file = os.path.join(tmpdir, f)
+                        break
+                if not sub_file:
+                    for f in os.listdir(tmpdir):
+                        if f.startswith('sub.') and ('.en' in f or '.en-US' in f):
+                            sub_file = os.path.join(tmpdir, f)
+                            is_english = True
+                            break
+                
+                if sub_file:
+                    with open(sub_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    content = re.sub(r'WEBVTT.*?\n\n', '', content, flags=re.DOTALL)
+                    content = re.sub(r'\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}.*?\n', '', content)
+                    content = re.sub(r'^\d+\n', '', content, flags=re.MULTILINE)
+                    content = re.sub(r'<[^>]*>', '', content)
+                    final_text = ' '.join([line.strip() for line in content.split('\n') if line.strip()])
+                    
+                    if is_english and lang == "es":
+                        add_log(uid, "Traduciendo subtitulos de ingles a español...")
+                        final_text = translate_to_spanish(final_text)
+                    
+                    # Paso 1: deduplicar sin IA (rápido)
+                    final_text = remove_repetitions(final_text)
+                    
+                    # Paso 2: Limpieza con IA para puntuación y párrafos
+                    update_progress(req.uid, 80, f"Aplicando limpieza con IA ({lang})...")
+                    final_text = cleanup_transcript_with_ai(final_text, local_groq, lang)
+                    
+                    save_cache_entry(cache_key, final_text)
+                    add_log(uid, "Transcripcion via subtitulos completada.")
+                    update_progress(req.uid, 100, "¡Transcripción lista!")
+                    return {"transcript": final_text, "method": "subtitles"}
+
+
+            raise Exception("No direct subtitles")
+
+        except Exception as e:
+            add_log(uid, f"Fallo extraccion de subtitulos: {str(e)}")
+            # 2. Descargar audio y usar Whisper con 3 estrategias
+            audio_downloaded = False
+            audio_file = None
+            
+            add_log(uid, "Iniciando descarga de audio para Whisper...")
+
+            
+            # Estrategia 1: Móvil sin cookies
+            try:
+                audio_opts = get_robust_opts(url, {'format': 'bestaudio/best', 'outtmpl': os.path.join(tmpdir, 'audio.%(ext)s'), 'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '64'}]})
+                audio_opts.pop('cookiefile', None)
+                audio_opts['extractor_args'] = {'youtube': {'player_client': ['android', 'ios']}}
+                await run_blocking(ydl_download_sync, audio_opts, url)
+                for f in os.listdir(tmpdir):
+                    if f.startswith('audio.'):
+                        audio_file = os.path.join(tmpdir, f)
+                        audio_downloaded = True
+                        break
+            except: pass
+
+            # Estrategia 2: Con cookies
+            if not audio_downloaded:
+                try:
+                    audio_opts = get_robust_opts(url, {'format': 'bestaudio/best', 'outtmpl': os.path.join(tmpdir, 'audio.%(ext)s'), 'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '64'}]})
+                    await run_blocking(ydl_download_sync, audio_opts, url)
+                    for f in os.listdir(tmpdir):
+                        if f.startswith('audio.'):
+                            audio_file = os.path.join(tmpdir, f)
+                            audio_downloaded = True
+                            break
+                except: pass
+
+            if audio_downloaded and audio_file:
+                # 2.1 Intentar con Groq API (Más rápido y ligero)
+                if local_groq:
+                    try:
+                        file_size_mb = os.path.getsize(audio_file) / (1024 * 1024)
+                        transcription = ""
+                        if AudioSegment:
+                            # Lógica de troceado si es necesario
+                            if file_size_mb >= 20:
+                                 add_log(uid, f"Audio grande ({file_size_mb:.1f}MB). Dividiendo en trozos de 20 min...")
+                                 audio = AudioSegment.from_file(audio_file)
+                                 chunk_length_ms = 20 * 60 * 1000 # 20 minutos por trozo
+                                 chunks = []
+                                 for i in range(0, len(audio), chunk_length_ms):
+                                     chunks.append(audio[i:i + chunk_length_ms])
+                                 
+                                 for idx, chunk in enumerate(chunks):
+                                     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as c_file:
+                                         chunk.export(c_file.name, format="mp3", bitrate="64k")
+                                         add_log(uid, f"Transcribiendo parte {idx+1}/{len(chunks)}...")
+                                         with open(c_file.name, "rb") as f:
+                                             part_text = local_groq.audio.transcriptions.create(
+                                                 file=(c_file.name, f.read()),
+                                                 model="whisper-large-v3",
+                                                 response_format="text",
+                                                 language=lang if lang in ["es", "en"] else None
+                                             )
+                                             transcription += part_text + " "
+                                         os.remove(c_file.name)
+
+                            else:
+                                update_progress(req.uid, 40, "Enviando a Whisper (IA)...")
+                                with open(audio_file, "rb") as f:
+                                    trans_res = local_groq.audio.transcriptions.create(
+                                        file=(audio_file, f.read()),
+                                        model="whisper-large-v3",
+                                        response_format="text",
+                                        language=lang if lang in ["es", "en"] else None
+                                    )
+                                transcription = str(trans_res)
+                        else:
+                            add_log(uid, "Enviando audio completo a Whisper (IA)...")
+                            with open(audio_file, "rb") as f:
+                                transcription = local_groq.audio.transcriptions.create(
+                                    file=(audio_file, f.read()),
+                                    model="whisper-large-v3",
+                                    response_format="text",
+                                    language=lang if lang in ["es", "en"] else None
+                                )
+                        
+                        add_log(uid, "Procesando texto crudo de Whisper...")
+                        # Paso 1: Deduplicar repeticiones de Whisper (sin IA, rápido)
+                        transcription = remove_repetitions(transcription.strip())
+                        
+                        # Paso 2: Limpieza con IA para puntuación y párrafos
+                        add_log(uid, f"Aplicando limpieza y formato IA ({lang})...")
+                        transcription = cleanup_transcript_with_ai(transcription, local_groq, lang)
+                        
+                        save_cache_entry(cache_key, transcription)
+                        add_log(uid, "Transcripcion de archivo completada.")
+                        update_progress(req.uid, 100, "¡Transcripción lista!")
+                        return {"transcript": transcription, "method": "groq_whisper_v3_file"}
+                    except Exception as ge:
+                        add_log(uid, f"Error critico en Groq Whisper: {str(ge)}")
+                        raise Exception(f"Error en Groq API: {str(ge)}")
+
+
+                raise Exception("Groq API no configurada y no se encontraron subtítulos.")
+
+            raise Exception("No se pudo descargar el audio para la transcripción por ningún medio.")
+        except Exception as final_e:
+            return JSONResponse(status_code=500, content={"error": str(final_e)})
+
+class ChatRequest(BaseModel):
+    url: str
+    question: str
+    transcript: str
+    groq_api_key: Optional[str] = None
+
+@app.post("/api/chat")
+async def chat_with_transcript(req: ChatRequest):
+    local_groq = get_local_groq(req.groq_api_key)
+    if not local_groq:
+        raise HTTPException(status_code=500, detail="Groq API no configurada")
+    
+    # --- RECORTE DE SEGURIDAD PARA RATE LIMITS (6000 TPM) ---
+    # Si la transcripcion es muy larga, la recortamos para que quepa en el limite gratuito de Groq.
+    # 20,000 caracteres son aprox 5,000 tokens, lo que deja margen para la respuesta.
+    transcript_safe = req.transcript
+    if len(transcript_safe) > 12000:
+        logger.warning(f"Transcripcion muy larga ({len(transcript_safe)} chars). Recortando para evitar error 413.")
+        transcript_safe = transcript_safe[:6000] + "\n\n[...] [Parte omitida por longitud] [...] \n\n" + transcript_safe[-6000:]
+
+    try:
+        system_prompt = f"""
+        Eres un asistente experto que analiza transcripciones de videos. 
+        Tu objetivo es responder preguntas del usuario basándote únicamente en la siguiente transcripción (puede estar recortada por longitud):
+        
+        --- TRANSCRIPCIÓN ---
+        {transcript_safe}
+        --- FIN ---
+        
+        Responde de forma concisa, útil y en español. 
+        
+        REGLAS DE FORMATO:
+        1. Usá **negritas** para nombres de productos, marcas o conceptos clave.
+        2. Usá "punto y aparte" (doble salto de línea) entre párrafos o puntos de una lista para que el texto "respire" y sea fácil de leer.
+        3. Si hacés una lista, que cada ítem esté separado por una línea en blanco.
+        
+        Si la respuesta no está en la transcripción, dilo amablemente.
+        """
+        
+        completion = local_groq.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.question}
+            ],
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        
+        return {"answer": completion.choices[0].message.content}
+    except Exception as e:
+        logger.exception("Error en Chat")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/download")
+async def download_video(req: VideoRequest, background_tasks: BackgroundTasks):
+    url = sanitize_url(req.url)
+    format_id = req.format_id
+    uid = str(uuid.uuid4())
+
+    output_template = os.path.join(DOWNLOAD_FOLDER, f'%(title)s_{uid}.%(ext)s')
+    
+    if format_id and format_id not in ('best', 'bestvideo+bestaudio', None):
+        fmt = f"{format_id}/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+    else:
+        fmt = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+
+    extra_opts = {
+        'format': fmt,
+        'outtmpl': output_template,
+        'merge_output_format': 'mp4',
+    }
+    
+    def my_hook(d):
+        if d['status'] == 'downloading':
+            p = d.get('_percent_str', '0%').replace('\x1b[0;94m','').replace('\x1b[0m','').strip()
+            # extract number
+            try:
+                p_val = float(p.replace('%',''))
+                update_progress(req.uid, int(p_val * 0.9), f"Descargando video: {p}")
+            except: pass
+        elif d['status'] == 'finished':
+            update_progress(req.uid, 90, "Descarga completada, procesando con FFmpeg...")
+
+    extra_opts['progress_hooks'] = [my_hook]
+
+    if req.start_time or req.end_time:
+        from yt_dlp.utils import parse_duration, download_range_func
+        start_sec = parse_duration(req.start_time) if req.start_time else 0
+        end_sec = parse_duration(req.end_time) if req.end_time else float('inf')
+        extra_opts['download_ranges'] = download_range_func(None, [(start_sec, end_sec)])
+        extra_opts['force_keyframes_at_cuts'] = True
+
+    # Intentar descarga con 3 estrategias
+    downloaded = False
+    last_err = ""
+    update_progress(req.uid, 5, "Iniciando proceso...")
+
+    # --- ESTRATEGIA 1: Celular sin cookies (La que funcionó para info) ---
+    try:
+        logger.debug("Descarga Intento 1 - Celular sin cookies...")
+        update_progress(req.uid, 10, "Conectando al servidor (1/3)...")
+        opts = get_robust_opts(url, extra_opts)
+        opts.pop('cookiefile', None)
+        opts['extractor_args'] = {'youtube': {'player_client': ['android', 'ios']}}
+        await run_blocking(ydl_download_sync, opts, url)
+        downloaded = True
+    except Exception as e:
+        last_err = str(e)
+        logger.debug(f"Descarga Intento 1 falló: {last_err[:100]}")
+
+    # --- ESTRATEGIA 2: Navegador con Cookies ---
+    if not downloaded:
+        try:
+            logger.debug("Descarga Intento 2 - Con cookies...")
+            update_progress(req.uid, 15, "Reintentando con cookies (2/3)...")
+            opts = get_robust_opts(url, extra_opts)
+            await run_blocking(ydl_download_sync, opts, url)
+            downloaded = True
+        except Exception as e:
+            last_err += f" | Intento 2: {str(e)[:100]}"
+            logger.debug(f"Descarga Intento 2 falló: {str(e)[:100]}")
+
+    # --- ESTRATEGIA 3: Forzar iOS ---
+    if not downloaded:
+        try:
+            logger.debug("Descarga Intento 3 - Forzando iOS...")
+            update_progress(req.uid, 20, "Forzando modo iOS (3/3)...")
+            opts = get_robust_opts(url, extra_opts)
+            opts.pop('cookiefile', None)
+            opts['extractor_args'] = {'youtube': {'player_client': ['ios']}}
+            await run_blocking(ydl_download_sync, opts, url)
+            downloaded = True
+        except Exception as e:
+            last_err += f" | Intento 3: {str(e)[:100]}"
+            logger.debug(f"Descarga Intento 3 falló: {str(e)[:100]}")
+
+    if downloaded:
+        update_progress(req.uid, 100, "¡Archivo listo!")
+        # Encontrar archivo
+        for f in os.listdir(DOWNLOAD_FOLDER):
+            if uid in f:
+                file_path = os.path.join(DOWNLOAD_FOLDER, f)
+                def remove_file(path: str):
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                            logger.debug(f"Archivo borrado: {file_path}")
+                    except Exception as e:
+                        logger.exception("Error borrando archivo")
+                
+                background_tasks.add_task(remove_file, file_path)
+                return FileResponse(file_path, filename=f)
+        raise Exception("Archivo no encontrado tras descarga exitosa")
+    else:
+        raise HTTPException(status_code=500, detail=f"No se pudo descargar: {last_err[:200]}")
+
+# --- HEALTHCHECKS ---
+@app.get("/api/health/cookies")
+async def check_cookies():
+    """Verifica si las cookies actuales siguen siendo válidas con un video de prueba."""
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    try:
+        opts = get_robust_opts(test_url)
+        info = await run_blocking(extract_info_sync, opts, test_url)
+        return {
+            "status": "ok", 
+            "cookie_valid": True, 
+            "video_title": info.get('title'),
+            "server_time": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "cookie_valid": False, 
+            "error": str(e),
+            "server_time": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+
+# --- LIMPIEZA DE DESCARGAS ---
+@app.delete("/api/clear-downloads")
+async def clear_downloads():
+    try:
+        import shutil
+        if os.path.exists(DOWNLOAD_FOLDER):
+            shutil.rmtree(DOWNLOAD_FOLDER)
+        os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+        return {"status": "success", "message": "Descargas locales eliminadas correctamente."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- HERRAMIENTAS PERIODÍSTICAS (IA) ---
+
+class AnalyzeRequest(BaseModel):
+    transcript: str
+    mode: str  # "summary" | "quotes" | "data" | "angle"
+    groq_api_key: Optional[str] = None
+
+JOURNALIST_PROMPTS = {
+    "summary": """Sos un asistente para periodistas especializados en comunicación política e imagen pública.
+Dado el siguiente texto transcripto, generá un RESUMEN EJECUTIVO periodístico de máximo 5 oraciones.
+Incluí: tema central, postura del hablante, y punto más relevante para una nota periodística.
+Respondé solo con el resumen, sin encabezados ni explicaciones.
+
+TRANSCRIPCIÓN:
+{transcript}""",
+
+    "quotes": """Sos un asistente para periodistas especializados en comunicación política e imagen pública.
+Dado el siguiente texto transcripto, extraé las CITAS TEXTUALES más relevantes para una nota periodística.
+Para cada cita, indicá en formato:
+
+• **[cita textual]** — [contexto breve de por qué es relevante]
+
+Separá cada cita con un DOBLE SALTO DE LÍNEA para que el texto sea legible.
+Seleccioná máximo 5 citas. Si no hay citas claras, indicalo.
+Respondé solo con las citas, sin introducción.
+
+TRANSCRIPCIÓN:
+{transcript}""",
+
+    "data": """Sos un asistente para periodistas especializados en comunicación política e imagen pública.
+Dado el siguiente texto transcripto, extraé todos los DATOS DUROS mencionados:
+- Fechas y plazos
+- Cifras, porcentajes, montos
+- Nombres de personas y sus cargos
+- Instituciones y organizaciones
+- Lugares geográficos relevantes
+
+Organizalos en una lista clara. Si no hay datos duros, indicalo.
+Respondé solo con los datos, sin introducción.
+
+TRANSCRIPCIÓN:
+{transcript}""",
+
+    "angle": """Sos un editor de medios con experiencia en periodismo político y comunicación institucional.
+Dado el siguiente texto transcripto, sugerí 3 ÁNGULOS PERIODÍSTICOS posibles para cubrir este contenido.
+
+Para cada ángulo incluí:
+• **Título sugerido**
+• **Justificación**: Por qué es el ángulo más relevante.
+
+Separá cada propuesta con un DOBLE SALTO DE LÍNEA.
+Respondé directamente con los 3 ángulos, sin introducción.
+
+TRANSCRIPCIÓN:
+{transcript}"""
+}
+
+@app.post("/api/analyze")
+async def analyze_transcript(req: AnalyzeRequest):
+    """
+    Analiza una transcripción con IA para uso periodístico.
+    Modos: summary (resumen), quotes (citas), data (datos duros), angle (ángulos de nota)
+    """
+    local_groq = get_local_groq(req.groq_api_key)
+    if not local_groq:
+        raise HTTPException(status_code=503, detail="Groq API no configurada.")
+
+    if req.mode not in JOURNALIST_PROMPTS:
+        raise HTTPException(status_code=400, detail=f"Modo inválido. Opciones: {list(JOURNALIST_PROMPTS.keys())}")
+
+    if len(req.transcript.strip()) < 50:
+        raise HTTPException(status_code=400, detail="La transcripción es demasiado corta para analizar.")
+
+    # Truncar si es muy larga (Groq tiene límite de tokens)
+    transcript = req.transcript
+    if len(transcript) > 12000:
+        transcript = transcript[:6000] + "\n\n[...] [Parte omitida por longitud] [...] \n\n" + transcript[-6000:]
+
+    prompt = JOURNALIST_PROMPTS[req.mode].format(transcript=transcript)
+
+    # Modelos a intentar en orden: el grande primero, el liviano como fallback
+    MODELS_TO_TRY = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+    last_error = None
+    for model in MODELS_TO_TRY:
+        try:
+            response = local_groq.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1000,
+                temperature=0.3
+            )
+            result = response.choices[0].message.content.strip()
+            return {"result": result, "mode": req.mode, "model_used": model}
+
+        except Exception as e:
+            err_str = str(e)
+            logger.exception(f"Error con modelo {model}: {err_str}")
+
+            # Rate limit (429): intentar con el siguiente modelo
+            if "rate_limit_exceeded" in err_str or "429" in err_str:
+                last_error = e
+                logger.info(f"Rate limit en {model}, intentando con el siguiente modelo...")
+                continue
+            else:
+                # Error distinto al rate limit: falla inmediata con mensaje claro
+                raise HTTPException(status_code=500, detail=f"Error al analizar: {err_str}")
+
+    # Si todos los modelos fallaron por rate limit
+    raise HTTPException(
+        status_code=429,
+        detail="⚠️ Límite de uso de Groq alcanzado por hoy. Podés:\n1. Esperá unos minutos e intentá de nuevo.\n2. Configurar tu propia API key de Groq en Configuración (gratis en console.groq.com)."
+    )
+
+
+# --- SERVIDO DE FRONTEND ---
+# Este bloque DEBE ir al final para no interceptar rutas de la API
+if os.path.exists(FRONTEND_DIR):
+    @app.get("/{path:path}")
+    async def serve_static_or_index(path: str):
+        # Si la ruta está vacía, servimos index.html
+        if not path:
+            return FileResponse(os.path.join(FRONTEND_DIR, 'index.html'))
+
+        # Intentamos buscar el archivo en la carpeta frontend de forma segura
+        requested = Path(FRONTEND_DIR) / path
+        try:
+            resolved = requested.resolve()
+            frontend_root = Path(FRONTEND_DIR).resolve()
+            # Asegurar que la ruta resuelta está dentro de la carpeta frontend
+            if frontend_root in resolved.parents or resolved == frontend_root:
+                if resolved.exists() and resolved.is_file():
+                    return FileResponse(str(resolved))
+        except Exception as e:
+            logger.debug(f"Error resolviendo ruta estática: {e}")
+
+        # Fallback a index.html para rutas SPA
+        return FileResponse(os.path.join(FRONTEND_DIR, 'index.html'))
+
+    # Soporte explícito para HEAD / (Render HealthCheck)
+    @app.head("/", include_in_schema=False)
+    @app.get("/", include_in_schema=False)
+    async def serve_index():
+        if os.path.exists(os.path.join(FRONTEND_DIR, 'index.html')):
+            return FileResponse(os.path.join(FRONTEND_DIR, 'index.html'))
+        return Response(content="StreamVault API Root", media_type="text/plain")
+else:
+    logger.warning(f"No se encontró la carpeta frontend en {FRONTEND_DIR}")
+
+
+# --- FUNCIONES DE MANTENIMIENTO DEL SISTEMA ---
+
+@app.post("/api/system/update-app")
+async def update_app(request: Request):
+    """Ejecuta git pull para traer los últimos cambios del código."""
+    # Protección simple: si ADMIN_TOKEN está configurado, requerir header X-ADMIN-TOKEN
+    admin_token = os.environ.get('ADMIN_TOKEN')
+    if admin_token:
+        provided = request.headers.get('X-ADMIN-TOKEN') or request.query_params.get('admin_token')
+        if not provided or provided != admin_token:
+            raise HTTPException(status_code=403, detail="Se requiere token de administrador para esta operación.")
+    try:
+        import subprocess
+        # Intentar git pull
+        result = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True, check=True)
+        return {"status": "ok", "message": "Aplicación actualizada con éxito.", "output": result.stdout}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Error al actualizar Git: {str(e)}"})
+
+@app.post("/api/system/update-engine")
+async def update_engine(request: Request):
+    """Actualiza el ejecutable yt-dlp.exe."""
+    admin_token = os.environ.get('ADMIN_TOKEN')
+    if admin_token:
+        provided = request.headers.get('X-ADMIN-TOKEN') or request.query_params.get('admin_token')
+        if not provided or provided != admin_token:
+            raise HTTPException(status_code=403, detail="Se requiere token de administrador para esta operación.")
+    try:
+        import subprocess
+        ytdlp_path = os.path.join(ROOT_DIR, "yt-dlp.exe")
+        if not os.path.exists(ytdlp_path):
+            ytdlp_path = "yt-dlp" # Fallback a path si no está en root
+            
+        result = subprocess.run([ytdlp_path, "-U"], capture_output=True, text=True, check=True)
+        return {"status": "ok", "message": "Motor de descarga actualizado.", "output": result.stdout}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Error al actualizar motor: {str(e)}"})
+
+@app.post("/api/system/reset")
+async def reset_system(request: Request):
+    """Limpia descargas y base de datos (mantenimiento extremo)."""
+    admin_token = os.environ.get('ADMIN_TOKEN')
+    if admin_token:
+        provided = request.headers.get('X-ADMIN-TOKEN') or request.query_params.get('admin_token')
+        if not provided or provided != admin_token:
+            raise HTTPException(status_code=403, detail="Se requiere token de administrador para esta operación.")
+    try:
+        import shutil
+        # 1. Limpiar descargas
+        if os.path.exists(DOWNLOAD_FOLDER):
+            shutil.rmtree(DOWNLOAD_FOLDER)
+            os.makedirs(DOWNLOAD_FOLDER)
+        return {"status": "ok", "message": "Sistema reseteado (descargas limpias)."}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+if __name__ == "__main__":
+
+    import uvicorn
+    port = int(os.environ.get("PORT", 5000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
