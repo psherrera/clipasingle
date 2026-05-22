@@ -1,4 +1,4 @@
-﻿"""
+"""
 YT Downloader Pro - Backend
 Optimized for Render.com deployment.
 Features: 
@@ -361,12 +361,14 @@ Procesa el texto que se encuentra a continuación entre las etiquetas [INICIO DE
 {chunk}
 [FIN DEL TEXTO]"""
                 else:
-                    prompt = f"""Sos un editor experto. Tu tarea es LIMPIAR y FORMATEAR esta parte de una transcripción.
-                    1. ELIMINÁ repeticiones de frases.
-                    2. AGREGÁ puntuación (comas, puntos).
-                    3. DIVIDÍ en párrafos con doble salto de línea.
+                    prompt = f"""Sos un editor ortotipográfico muy estricto. Tu ÚNICA tarea es agregar puntuación (comas, puntos) y dividir en párrafos con doble salto de línea la siguiente transcripción.
+                    REGLAS ESTRICTAS:
+                    1. NO ELIMINES NINGUNA PALABRA, ni siquiera tartamudeos o repeticiones de frases. Debes ser 100% fiel a lo que se dice.
+                    2. AGREGÁ puntuación correcta (comas, puntos).
+                    3. DIVIDÍ el texto en párrafos lógicos con doble salto de línea para que no sea un bloque gigante.
                     4. EL IDIOMA DE SALIDA DEBE SER: {lang_name}.
-                    5. NO RESUMAS, mantené el contenido original.
+                    5. NO RESUMAS, mantené exactamente las mismas palabras del original.
+                    6. Devolve ÚNICAMENTE el texto formateado, sin introducciones.
                     TEXTO:
                     {chunk}"""
                 completion = actual_client.chat.completions.create(
@@ -398,12 +400,14 @@ Procesa el texto que se encuentra a continuación entre las etiquetas [INICIO DE
 {text}
 [FIN DEL TEXTO]"""
             else:
-                prompt = f"""Sos un editor experto. Tu tarea es LIMPIAR y FORMATEAR la siguiente transcripción de un video.
-                1. ELIMINÁ repeticiones de frases.
+                prompt = f"""Sos un editor ortotipográfico muy estricto. Tu ÚNICA tarea es agregar puntuación (comas, puntos) y dividir en párrafos con doble salto de línea la siguiente transcripción.
+                REGLAS ESTRICTAS:
+                1. NO ELIMINES NINGUNA PALABRA, ni siquiera tartamudeos o repeticiones de frases. Debes ser 100% fiel a lo que se dice.
                 2. AGREGÁ puntuación correcta (comas, puntos).
-                3. DIVIDÍ el texto en párrafos lógicos con doble salto de línea.
+                3. DIVIDÍ el texto en párrafos lógicos con doble salto de línea para que no sea un bloque gigante.
                 4. EL IDIOMA DE SALIDA DEBE SER: {lang_name}.
-                5. NO RESUMAS, mantené el contenido original.
+                5. NO RESUMAS, mantené exactamente las mismas palabras del original.
+                6. Devolve ÚNICAMENTE el texto formateado, sin introducciones.
                 TRANSCRIPCIÓN:
                 {text}"""
             completion = actual_client.chat.completions.create(
@@ -937,16 +941,28 @@ async def download_video(req: VideoRequest, background_tasks: BackgroundTasks):
 
     output_template = os.path.join(DOWNLOAD_FOLDER, f'%(title)s_{uid}.%(ext)s')
     
-    if format_id and format_id not in ('best', 'bestvideo+bestaudio', None):
-        fmt = f"{format_id}/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+    if format_id == 'mp3':
+        fmt = 'bestaudio/best'
+        extra_opts = {
+            'format': fmt,
+            'outtmpl': output_template,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        }
     else:
-        fmt = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+        if format_id and format_id not in ('best', 'bestvideo+bestaudio', None):
+            fmt = f"{format_id}/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+        else:
+            fmt = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
 
-    extra_opts = {
-        'format': fmt,
-        'outtmpl': output_template,
-        'merge_output_format': 'mp4',
-    }
+        extra_opts = {
+            'format': fmt,
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',
+        }
     
     def my_hook(d):
         if d['status'] == 'downloading':

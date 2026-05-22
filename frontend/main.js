@@ -383,6 +383,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 opt.textContent = `${f.label} ${size}`.trim();
                 formatSelect.appendChild(opt);
             });
+            
+            const optMp3 = document.createElement('option');
+            optMp3.value = 'mp3';
+            optMp3.textContent = '🎵 Audio MP3 (Alta Calidad)';
+            formatSelect.appendChild(optMp3);
 
             if (!data.has_ffmpeg) qualityWarning?.classList.remove('hidden');
             showTranscriptBtn?.classList.remove('hidden');
